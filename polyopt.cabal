@@ -3,9 +3,9 @@ version:        0.1
 license:        GPL
 license-file:   LICENSE
 author:         dan corson <danl@alum.mit.edu>
-synopsis:       <syn>
+synopsis:       no-extra-typing command-line/config-file program options
 build-type:     Simple
-build-depends:  base, haskell98
+build-depends:  base, haskell98, ConfigFile, template-haskell
 
 executable:     polyopt
 main-is:        Main.hs
