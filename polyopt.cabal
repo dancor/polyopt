@@ -5,7 +5,7 @@ license-file:   LICENSE
 author:         dan corson <danl@alum.mit.edu>
 synopsis:       no-extra-typing command-line/config-file program options
 build-type:     Simple
-build-depends:  base, haskell98, ConfigFile, template-haskell
+build-depends:  base, haskell98, ConfigFile, template-haskell, haskell-src-meta
 
 executable:     polyopt
 main-is:        Main.hs

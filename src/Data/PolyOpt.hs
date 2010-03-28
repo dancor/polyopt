@@ -46,10 +46,10 @@ main = do
 import Control.Applicative
 import Data.Char
 import Data.Typeable
+import Language.Haskell.Meta.Parse
 import Language.Haskell.TH
 
 data ArgInfo a = ArgInfo {
-  argType :: Type,
   argRequired :: Bool,
   argGloss :: String,
   argDef :: a,
@@ -61,25 +61,20 @@ data PolyOptA a = PolyOptA {
   argInfo :: Maybe (ArgInfo a),
   help :: String}
 
-data PolyOpt = forall a. PolyOpt (PolyOptA a)
+data PolyOpt = forall a. (Typeable a) => PolyOpt (PolyOptA a)
 
 noArg :: [String] -> [Char] -> String -> PolyOpt
-noArg n c = PolyOpt . PolyOptA n c Nothing
+noArg n c h = PolyOpt (PolyOptA n c Nothing h :: PolyOptA ())
 
 reqArg, optArg :: (Typeable a) => [String] -> [Char] -> String -> a ->
   (String -> a) -> String -> PolyOpt
-reqArg n c g d r = PolyOpt . PolyOptA n c (Just $ ArgInfo (tOf d) True g d r)
-optArg n c g d r = PolyOpt . PolyOptA n c (Just $ ArgInfo (tOf d) False g d r)
+reqArg n c g d r = PolyOpt . PolyOptA n c (Just $ ArgInfo True g d r)
+optArg n c g d r = PolyOpt . PolyOptA n c (Just $ ArgInfo False g d r)
 
--- here be hacks!  i'm terrible at TH, there must be a real way to do it.
--- this hack works for the simple types that happen to be all i need at first,
--- but it is completely unacceptable and must be fixed to call the library
--- usable at all.
+-- there might be a TH way to do this that doesn't need Typeable at all..
+-- unsure
 tOf :: (Typeable a) => a -> Type
-tOf x = foldr1 AppT [ConT $ mkName w | w <- map suicide . words $ showsTypeRep (typeOf x) ""]
-  where
-    suicide "[Char]" = "String"
-    suicide a = a
+tOf x = either error id . parseType $ showsTypeRep (typeOf x) ""
 
 dashToCamel :: String -> String
 dashToCamel [] = []
@@ -87,22 +82,15 @@ dashToCamel ('-':x:xs) = toUpper x : dashToCamel xs
 dashToCamel ['-'] = error "polyOpt: trailing dash in option name not allowed"
 dashToCamel (x:xs) = x : dashToCamel xs
 
-argToType :: ArgInfo a -> Q Type
+-- todo: implement tOf in TH or make all this stuff non-monadic
+argToType :: (Typeable a) => ArgInfo a -> Q Type
 argToType arg = do
-  {-
-  -- this is how i imagined not having the tOf hack, but it is illegal for
-  -- reasons i don't understand :(
-  let
-    ArgInfo _ _ d _ = arg
-  VarI _ t _ _ <- reify 'd
-  return t
-  -}
-  return $ argType arg
+  return . tOf $ argDef arg
 
-optToType :: PolyOptA a -> Q Type
+optToType :: (Typeable a) => PolyOptA a -> Q Type
 optToType = maybe (return $ ConT ''Bool) argToType . argInfo
 
-optToRecord :: PolyOptA a -> Q (Name, Strict, Type)
+optToRecord :: (Typeable a) => PolyOptA a -> Q (Name, Strict, Type)
 optToRecord opt = (,,)
   (mkName . dashToCamel . head $ names opt)
   NotStrict <$> optToType opt
