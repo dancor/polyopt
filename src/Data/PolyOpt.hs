@@ -82,23 +82,19 @@ dashToCamel ('-':x:xs) = toUpper x : dashToCamel xs
 dashToCamel ['-'] = error "polyOpt: trailing dash in option name not allowed"
 dashToCamel (x:xs) = x : dashToCamel xs
 
--- todo: implement tOf in TH or make all this stuff non-monadic
-argToType :: (Typeable a) => ArgInfo a -> Q Type
-argToType arg = do
-  return . tOf $ argDef arg
+optToType :: (Typeable a) => PolyOptA a -> Type
+optToType = maybe (ConT ''Bool) (tOf . argDef) . argInfo
 
-optToType :: (Typeable a) => PolyOptA a -> Q Type
-optToType = maybe (return $ ConT ''Bool) argToType . argInfo
+-- is IsStrict better?  i have no idea, probably doesn't matter
+optToRecord :: (Typeable a) => PolyOptA a -> (Name, Strict, Type)
+optToRecord opt =
+  (mkName . dashToCamel . head $ names opt, NotStrict, optToType opt)
 
-optToRecord :: (Typeable a) => PolyOptA a -> Q (Name, Strict, Type)
-optToRecord opt = (,,)
-  (mkName . dashToCamel . head $ names opt)
-  NotStrict <$> optToType opt
-
-optBoxToRecord :: PolyOpt -> Q (Name, Strict, Type)
+optBoxToRecord :: PolyOpt -> (Name, Strict, Type)
 optBoxToRecord (PolyOpt opt) = optToRecord opt
 
 polyOpt :: [PolyOpt] -> Q [Dec]
-polyOpt opts = do
-  optRecords <- mapM optBoxToRecord opts
+polyOpt opts =
   return [DataD [] (mkName "Opts") [] [RecC (mkName "Opts") optRecords] []]
+  where
+  optRecords = map optBoxToRecord opts
