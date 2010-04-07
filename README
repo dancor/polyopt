@@ -1,0 +1,4 @@
+- as of U2010-04-07_04.38.12, for ghc 6.12.1, only new haskell-src-meta would
+  compile: http://moonpatio.com/repos/haskell-src-meta_NEW_TH/
+- command-line args almost work
+- todo: config options
