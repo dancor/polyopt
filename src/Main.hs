@@ -1,15 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 import Data.PolyOpt
-import Opts
+import OptDesc
 
 $(polyOpt optDesc)
 
 main :: IO ()
 main = do
-  let
-    opts = Opts {
-      verbose = True,
-      color = Nothing,
-      showDecimal = 5}
-  putStrLn "hi"
+  let opts = defOpts
+  print $ version opts
+  print $ color opts
+  print $ showDecimal opts

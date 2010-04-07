@@ -1,14 +1,14 @@
-module Opts where
+module OptDesc where
 
 import Data.PolyOpt
 
 optDesc :: [PolyOpt]
 optDesc = [
-  noArg ["verbose"] "v"
+  noArg ["version"] "v"
     "Print version",
   reqArg ["color","colour"] "c"
-    "BYTES" (Nothing :: Maybe String) (Just . read)
+    "NAME"
     "Foreground color",
-  optArg ["show-decimal"] ""
-    "N" (0 :: Int) read
+  optArgGen ["show-decimal"] ""
+    "N" (0 :: Int) (maybe 8 read)
     "Show full decimal precision, or to N digits"]
