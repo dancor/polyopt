@@ -9,6 +9,6 @@ optDesc = [
   reqArg ["color","colour"] "c"
     "NAME"
     "Foreground color",
-  optArgGen ["show-decimal"] ""
-    "N" (0 :: Int) (maybe 8 read)
+  optArg ["show-decimal"] ""
+    "N"
     "Show full decimal precision, or to N digits"]

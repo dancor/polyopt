@@ -1,7 +1,6 @@
-{-# LANGUAGE ExistentialQuantification, TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell #-}
 
-module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg,
-  noArgGen, reqArgGen, optArgGen) where
+module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg) where
 
 {-
 PolyOpt will allow a no-repetition specification of program options and then
@@ -22,8 +21,8 @@ OptDesc.hs:
     reqArg ["color","colour"] "c"
       "NAME"
       "Foreground color",
-    optArgGen ["show-decimal"] ""
-      "N" (0 :: Int) (maybe 8 read)
+    optArg ["show-decimal"] ""
+      "N"
       "Show full decimal precision, or to N digits"]
 
 Main.hs:
@@ -37,7 +36,8 @@ Main.hs:
 
   main :: IO ()
   main = do
-    (opts, args) <- getOpts optDesc "usage"
+    (opts, args) <- getOpts "usage"
+    print args
     print $ verbose opts
     print $ color opts
     print $ showDecimal opts
@@ -46,26 +46,26 @@ This is what gets generated:
   data Opts = Opts {
     version :: Bool,
     color :: Maybe String,
-    showDecimal :: Int}
+    showDecimal :: Maybe (Maybe String)}
 
   defOpts :: Opts
   defOpts = Opts {
     version = False,
-    color = Nothing :: Maybe String,
-    showDecimal = 0 :: Int}
+    color = Nothing,
+    showDecimal = Nothing}
 
-  getOpts :: [PolyOpt] -> String -> IO (Opts, [String])
-  getOpts optDesc header = do
+  getOpts :: String -> IO (Opts, [String])
+  getOpts header = do
     let
       options = [
         Option "v" ["version"]
           (NoArg (\ o -> o {version = True}))
           "Print version",
         Option "c" ["color", "colour"]
-          (ReqArg (\ a o -> o {color = (Just) a}) "NAME")
+          (ReqArg (\ a o -> o {color = Just a}) "NAME")
           "Foreground color",
         Option "" ["show-decimal"]
-          (OptArg (\ a o -> o {showDecimal = (maybe 8 read) a}) "N")
+          (OptArg (\ a o -> o {showDecimal = Just a}) "N")
           "Show full decimal precision, or to N digits"]
     args <- getArgs
     return $ case getOpt Permute options args of
@@ -76,59 +76,36 @@ This is what gets generated:
 import Control.Applicative
 import Data.Char
 import Data.Typeable
-import Language.Haskell.Meta.Parse
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
 
 import System.Console.GetOpt
 import System.Environment
 
-data ArgInfo a =
-  NoArgInfo {
-    argDef :: a,
-    noArgRead :: a} |
+data ArgInfo =
+  NoArgInfo |
   ReqArgInfo {
-    argGloss :: String,
-    argDef :: a,
-    reqArgRead :: String -> a} |
+    argGloss :: String} |
   OptArgInfo {
-    argGloss :: String,
-    argDef :: a,
-    optArgRead :: Maybe String -> a}
+    argGloss :: String}
 
-data PolyOptA a = PolyOptA {
+data PolyOpt = PolyOpt {
+  recName :: String,
   names :: [String],
   chars :: [Char],
-  argInfo :: ArgInfo a,
+  argInfo :: ArgInfo,
   help :: String}
 
-data PolyOpt = forall a. (Lift a, Typeable a) => PolyOpt (PolyOptA a)
-
-noArgGen :: (Lift a, Typeable a) =>
-  [String] -> [Char] -> a -> a -> String -> PolyOpt
-noArgGen n c d r = PolyOpt . PolyOptA n c (NoArgInfo d r)
-
-reqArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
-  (String -> a) -> String -> PolyOpt
-reqArgGen n c g d r = PolyOpt . PolyOptA n c (ReqArgInfo g d r)
-
-optArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
-  (Maybe String -> a) -> String -> PolyOpt
-optArgGen n c g d r = PolyOpt . PolyOptA n c (OptArgInfo g d r)
-
 noArg :: [String] -> [Char] -> String -> PolyOpt
-noArg n c = noArgGen n c False True
+noArg n c = PolyOpt (namesToRecName n) n c NoArgInfo
 
 reqArg :: [String] -> [Char] -> String -> String -> PolyOpt
-reqArg n c g = reqArgGen n c g Nothing Just
+reqArg n c = PolyOpt (namesToRecName n) n c . ReqArgInfo
 
 optArg :: [String] -> [Char] -> String -> String -> PolyOpt
-optArg n c g = optArgGen n c g Nothing Just
+optArg n c = PolyOpt (namesToRecName n) n c . OptArgInfo
 
--- there might be a TH way to do this that doesn't need Typeable at all..
--- unsure
-tOf :: (Typeable a) => a -> Type
-tOf x = either error id . parseType $ showsTypeRep (typeOf x) ""
+namesToRecName = dashToCamel . head
 
 dashToCamel :: String -> String
 dashToCamel [] = []
@@ -138,23 +115,48 @@ dashToCamel ('-':x:xs) = toUpper x : dashToCamel xs
 dashToCamel ['-'] = error "polyOpt: trailing dash in option name not allowed"
 dashToCamel (x:xs) = x : dashToCamel xs
 
-optBoxInfo :: PolyOpt -> (Name, Type)
-optBoxInfo (PolyOpt opt) =
-  (mkName . dashToCamel . head $ names opt,
-  tOf . argDef $ argInfo opt)
+optBoxInfo :: PolyOpt -> Q (Name, Type)
+optBoxInfo opt = (,)
+  (mkName $ recName opt) <$>
+  case argInfo opt of
+    NoArgInfo -> [t| Bool |]
+    ReqArgInfo _ -> [t| Maybe String |]
+    OptArgInfo _ -> [t| Maybe (Maybe String) |]
 
-defGen (PolyOpt opt) = lift . argDef $ argInfo opt
+--
+defGen opt = ConE $ case argInfo opt of
+  NoArgInfo -> 'False
+  _ -> 'Nothing
 
 polyOpt :: [PolyOpt] -> Q [Dec]
 polyOpt opts = do
-  defRecs <- zip optNames <$> mapM defGen opts
-  return [
-    DataD [] optsN [] [RecC optsN optRecords] [],
-    ValD (VarP $ mkName "defOpts") (NormalB $ RecConE optsN defRecs) []
-    ]
+  optInfos <- mapM optBoxInfo opts
+  let
+    defRecs = zip optNames $ map defGen opts
+    optsN = mkName "Opts"
+    -- is IsStrict better?  i have no idea, probably doesn't matter
+    optRecords = map (\ (n, t) -> (n, NotStrict, t)) optInfos
+    optNames = map fst optInfos
+  (DataD [] optsN [] [RecC optsN optRecords] [] :) <$> [d|
+    --getOpts :: [PolyOpt] -> String -> IO ($(optsN), [String])
+    getOpts header = do
+      let
+        defOpts = $(return $ RecConE optsN defRecs)
+        optOptions = $(ListE <$> mapM optToOption opts)
+      args <- getArgs
+      return $ case getOpt Permute optOptions args of
+        (o, n, []) -> (foldl (flip id) defOpts o, n)
+        (_, _, e) -> error $ concat e ++ usageInfo header optOptions |]
+
+optToOption :: PolyOpt -> Q Exp
+optToOption opt =
+  [| Option $(lift $ chars opt) $(lift $ names opt) $f $(lift $ help opt) |]
   where
-  optsN = mkName "Opts"
-  optInfos = map optBoxInfo opts
-  -- is IsStrict better?  i have no idea, probably doesn't matter
-  optRecords = map (\ (n, t) -> (n, NotStrict, t)) optInfos
-  optNames = map fst optInfos
+  name = mkName $ recName opt
+  f = case argInfo opt of
+    NoArgInfo -> [| NoArg (\ o ->
+      $(return $ RecUpdE (VarE 'o) [(name, ConE 'True)])) |]
+    ReqArgInfo g -> [| ReqArg (\ a o ->
+      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]
+    OptArgInfo g -> [| OptArg (\ a o ->
+      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]

@@ -7,7 +7,8 @@ $(polyOpt optDesc)
 
 main :: IO ()
 main = do
-  let opts = defOpts
+  (opts, args) <- getOpts "usage"
+  print args
   print $ version opts
   print $ color opts
   print $ showDecimal opts
