@@ -74,12 +74,16 @@ This is what gets generated:
 -}
 
 import Control.Applicative
+import Control.Monad
+import Control.Monad.Error (runErrorT)
+import Control.Monad.Trans (liftIO)
 import Data.Char
+import Data.ConfigFile
 import Data.Typeable
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
-
 import System.Console.GetOpt
+import System.Directory
 import System.Environment
 
 data ArgInfo =
@@ -138,14 +142,27 @@ polyOpt opts = do
     optRecords = map (\ (n, t) -> (n, NotStrict, t)) optInfos
     optNames = map fst optInfos
   (DataD [] optsN [] [RecC optsN optRecords] [] :) <$> [d|
-    --getOpts :: [PolyOpt] -> String -> IO ($(optsN), [String])
-    getOpts header = do
+    --getOpts :: FilePath -> String -> IO ($optsN, [String])
+    getOpts configFile header = do
+      config <- doesFileExist configFile >>= \ t -> if t
+        then either (const emptyCP) id <$> readfile emptyCP configFile
+        else return emptyCP
       let
+        configOptNames = either (const []) id $ options config "DEFAULT"
         defOpts = $(return $ RecConE optsN defRecs)
         optOptions = $(ListE <$> mapM optToOption opts)
+        --configOpts = $(foldM defOpts configOptNames
+        --configOpts = $(
+        configOpts = defOpts
+      {-
+      case configOpts of
+        [] ->
+        overlap -> error
+      -}
+      --print configOpts
       args <- getArgs
       return $ case getOpt Permute optOptions args of
-        (o, n, []) -> (foldl (flip id) defOpts o, n)
+        (o, n, []) -> (foldl (flip id) configOpts o, n)
         (_, _, e) -> error $ concat e ++ usageInfo header optOptions |]
 
 optToOption :: PolyOpt -> Q Exp

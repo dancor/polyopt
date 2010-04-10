@@ -7,7 +7,7 @@ $(polyOpt optDesc)
 
 main :: IO ()
 main = do
-  (opts, args) <- getOpts "usage"
+  (opts, args) <- getOpts "lolconfig" "usage"
   print args
   print $ version opts
   print $ color opts
