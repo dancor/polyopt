@@ -37,26 +37,26 @@ Main.hs:
   main :: IO ()
   main = do
     (opts, args) <- getOpts "usage"
-    print args
     print $ verbose opts
     print $ color opts
     print $ showDecimal opts
+    print args
 
-This is what gets generated:
+This is what gets generated (but ConfigFile part not shown here yet..):
   data Opts = Opts {
     version :: Bool,
     color :: Maybe String,
     showDecimal :: Maybe (Maybe String)}
 
-  defOpts :: Opts
-  defOpts = Opts {
-    version = False,
-    color = Nothing,
-    showDecimal = Nothing}
-
-  getOpts :: String -> IO (Opts, [String])
-  getOpts header = do
+  getOpts :: FilePath -> String -> IO (Opts, [String])
+  getOpts configFile header = do
     let
+      defOpts :: Opts
+      defOpts = Opts {
+        version = False,
+        color = Nothing,
+        showDecimal = Nothing}
+      options :: [OptDescr (Opts -> Opts)]
       options = [
         Option "v" ["version"]
           (NoArg (\ o -> o {version = True}))
@@ -67,9 +67,10 @@ This is what gets generated:
         Option "" ["show-decimal"]
           (OptArg (\ a o -> o {showDecimal = Just a}) "N")
           "Show full decimal precision, or to N digits"]
+    configOpts <- todoShowHowConfigIsProcessed configFile defOpts
     args <- getArgs
     return $ case getOpt Permute options args of
-      (o, n, []) -> (foldl (flip id) defOpts o, n)
+      (o, n, []) -> (foldl (flip id) configOpts o, n)
       (_, _, e) -> error $ concat e ++ usageInfo header options
 -}
 
@@ -79,6 +80,7 @@ import Control.Monad.Error (runErrorT)
 import Control.Monad.Trans (liftIO)
 import Data.Char
 import Data.ConfigFile
+import Data.Either.Utils
 import Data.Typeable
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
@@ -100,15 +102,16 @@ data PolyOpt = PolyOpt {
   argInfo :: ArgInfo,
   help :: String}
 
-noArg :: [String] -> [Char] -> String -> PolyOpt
+noArg :: [String] -> String -> [Char] -> PolyOpt
 noArg n c = PolyOpt (namesToRecName n) n c NoArgInfo
 
-reqArg :: [String] -> [Char] -> String -> String -> PolyOpt
+reqArg :: [String] -> String -> [Char] -> String -> PolyOpt
 reqArg n c = PolyOpt (namesToRecName n) n c . ReqArgInfo
 
-optArg :: [String] -> [Char] -> String -> String -> PolyOpt
+optArg :: [String] -> String -> [Char] -> String -> PolyOpt
 optArg n c = PolyOpt (namesToRecName n) n c . OptArgInfo
 
+namesToRecName :: [String] -> String
 namesToRecName = dashToCamel . head
 
 dashToCamel :: String -> String
@@ -127,7 +130,7 @@ optBoxInfo opt = (,)
     ReqArgInfo _ -> [t| Maybe String |]
     OptArgInfo _ -> [t| Maybe (Maybe String) |]
 
---
+defGen :: PolyOpt -> Exp
 defGen opt = ConE $ case argInfo opt of
   NoArgInfo -> 'False
   _ -> 'Nothing
@@ -148,22 +151,37 @@ polyOpt opts = do
         then either (const emptyCP) id <$> readfile emptyCP configFile
         else return emptyCP
       let
-        configOptNames = either (const []) id $ options config "DEFAULT"
+        configOptNames = either (const []) id $ options config defSection
         defOpts = $(return $ RecConE optsN defRecs)
         optOptions = $(ListE <$> mapM optToOption opts)
-        --configOpts = $(foldM defOpts configOptNames
-        --configOpts = $(
-        configOpts = defOpts
-      {-
-      case configOpts of
-        [] ->
-        overlap -> error
-      -}
-      --print configOpts
+        configOpts = foldl $(processConfigOpt 'config opts) defOpts
+          configOptNames
       args <- getArgs
       return $ case getOpt Permute optOptions args of
         (o, n, []) -> (foldl (flip id) configOpts o, n)
         (_, _, e) -> error $ concat e ++ usageInfo header optOptions |]
+
+defSection :: String
+defSection = "DEFAULT"
+
+processConfigOpt :: Name -> [PolyOpt] -> ExpQ
+processConfigOpt configN optDesc = [| \ opts optName ->
+  $(CaseE (VarE 'optName) . concat <$>
+  mapM (optMatch 'optName 'opts) optDesc) |]
+  where
+  -- unrolling over names is lame?
+  optMatch :: Name -> Name -> PolyOpt -> Q [Match]
+  optMatch optNameN optsN polyOpt =
+    mapM (\ n -> (\ v -> Match (LitP $ StringL n)
+    (NormalB $ RecUpdE (VarE optsN) [(mkName $ recName polyOpt, v)]) []) <$>
+    [| $procFunc . forceEither $
+      get $(return $ VarE configN) defSection $(return $ VarE optNameN) |]) $
+    names polyOpt
+    where
+    procFunc = case argInfo polyOpt of
+      NoArgInfo -> [| id |]
+      ReqArgInfo _ -> [| Just |]
+      OptArgInfo _ -> [| Just . Just |]
 
 optToOption :: PolyOpt -> Q Exp
 optToOption opt =

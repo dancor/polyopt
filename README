@@ -1,4 +1,3 @@
-- config processing almost working
 - todo: make more general
   - support non-DEFAULT config sections in some way?
     (right now don't even error if these exist, and they are ignored..)
@@ -12,3 +11,6 @@
     something
 - todo: actually use this
   - use this in some programs and see what issues come up
+- is it awkward that for optArgs, config can only do Nothing vs
+  Just (Just "lol"), whereas only by command-line option can you get
+  Just Nothing?

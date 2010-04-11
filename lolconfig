@@ -1,1 +1,3 @@
 version = True
+color = red
+show-decimal = 4
