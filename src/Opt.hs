@@ -10,6 +10,6 @@ $(polyOpt [
   reqArg ["color","colour"] "c"
     "NAME"
     "Foreground color",
-  optArg ["show-decimal"] ""
-    "N"
+  optArgGen ["show-decimal"] ""
+    "N" (0 :: Int) [| maybe 8 read |]
     "Show full decimal precision, or to N digits"])

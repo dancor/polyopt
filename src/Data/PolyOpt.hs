@@ -1,6 +1,8 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg) where
+module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg,
+  noArgGen, reqArgGen, optArgGen) where
 
 {-
 PolyOpt will allow a no-repetition specification of program options and then
@@ -77,37 +79,66 @@ import Data.Char
 import Data.ConfigFile
 import Data.Either.Utils
 import Data.Typeable
+import Language.Haskell.Meta.Parse
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
 import System.Console.GetOpt
 import System.Directory
 import System.Environment
 
-data ArgInfo =
-  NoArgInfo |
+data ArgInfo a =
+  NoArgInfo {
+    argDef :: a,
+    -- argGrab :: a,
+    argGrab :: Q Exp} |
   ReqArgInfo {
-    argGloss :: String} |
+    argGloss :: String,
+    argDef :: a,
+    -- argGrab :: String -> a,
+    argGrab :: Q Exp} |
   OptArgInfo {
-    argGloss :: String}
+    argGloss :: String,
+    argDef :: a,
+    -- argGrab :: Maybe String -> a,
+    argGrab :: Q Exp}
 
-data PolyOpt = PolyOpt {
+data PolyOptA a = PolyOptA {
   recName :: String,
   names :: [String],
   chars :: [Char],
-  argInfo :: ArgInfo,
+  argInfo :: ArgInfo a,
   help :: String}
 
-noArg :: [String] -> String -> [Char] -> PolyOpt
-noArg n c = PolyOpt (namesToRecName n) n c NoArgInfo
+data PolyOpt = forall a. PolyOpt (PolyOptA a)
 
-reqArg :: [String] -> String -> [Char] -> String -> PolyOpt
-reqArg n c = PolyOpt (namesToRecName n) n c . ReqArgInfo
+noArgGen :: (Lift a, Typeable a) =>
+  [String] -> [Char] -> a -> Q Exp -> String -> PolyOpt
+noArgGen n c d r = PolyOpt . PolyOptA (genRecName n) n c (NoArgInfo d r)
 
-optArg :: [String] -> String -> [Char] -> String -> PolyOpt
-optArg n c = PolyOpt (namesToRecName n) n c . OptArgInfo
+reqArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
+  Q Exp -> String -> PolyOpt
+reqArgGen n c g d r = PolyOpt . PolyOptA (genRecName n) n c (ReqArgInfo g d r)
 
-namesToRecName :: [String] -> String
-namesToRecName = dashToCamel . head
+optArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
+  Q Exp -> String -> PolyOpt
+optArgGen n c g d r = PolyOpt . PolyOptA (genRecName n) n c (OptArgInfo g d r)
+
+noArg :: [String] -> [Char] -> String -> PolyOpt
+noArg n c = noArgGen n c False [| True |]
+
+reqArg :: [String] -> [Char] -> String -> String -> PolyOpt
+reqArg n c g = reqArgGen n c g (Nothing :: Maybe String) [| Just |]
+
+optArg :: [String] -> [Char] -> String -> String -> PolyOpt
+optArg n c g = optArgGen n c g (Nothing :: Maybe (Maybe String)) [| Just |]
+
+genRecName :: [String] -> String
+genRecName = dashToCamel . head
+
+-- there might be a TH way to do this that doesn't need Typeable at all..
+-- unsure
+tOf :: (Typeable a) => a -> Type
+tOf x = either error id . parseType $ showsTypeRep (typeOf x) ""
 
 dashToCamel :: String -> String
 dashToCamel [] = []
@@ -118,16 +149,16 @@ dashToCamel ['-'] = error "polyOpt: trailing dash in option name not allowed"
 dashToCamel (x:xs) = x : dashToCamel xs
 
 optBoxInfo :: PolyOpt -> Q (Name, Type)
-optBoxInfo opt = (,)
+optBoxInfo (PolyOpt opt) = (,)
   (mkName $ recName opt) <$>
   case argInfo opt of
-    NoArgInfo -> [t| Bool |]
-    ReqArgInfo _ -> [t| Maybe String |]
-    OptArgInfo _ -> [t| Maybe (Maybe String) |]
+    NoArgInfo _ _ -> [t| Bool |]
+    ReqArgInfo _ _ _ -> [t| Maybe String |]
+    OptArgInfo _ _ _ -> [t| Maybe (Maybe String) |]
 
 defGen :: PolyOpt -> Exp
-defGen opt = ConE $ case argInfo opt of
-  NoArgInfo -> 'False
+defGen (PolyOpt opt) = ConE $ case argInfo opt of
+  NoArgInfo _ _ -> 'False
   _ -> 'Nothing
 
 polyOpt :: [PolyOpt] -> Q [Dec]
@@ -166,7 +197,7 @@ processConfigOpt configN optDesc = [| \ opts optName ->
   where
   -- unrolling over names is lame?
   optMatch :: Name -> Name -> PolyOpt -> Q [Match]
-  optMatch optNameN optsN polyOpt =
+  optMatch optNameN optsN (PolyOpt polyOpt) =
     mapM (\ n -> (\ v -> Match (LitP $ StringL n)
     (NormalB $ RecUpdE (VarE optsN) [(mkName $ recName polyOpt, v)]) []) <$>
     [| $procFunc . forceEither $
@@ -174,19 +205,19 @@ processConfigOpt configN optDesc = [| \ opts optName ->
     names polyOpt
     where
     procFunc = case argInfo polyOpt of
-      NoArgInfo -> [| id |]
-      ReqArgInfo _ -> [| Just |]
-      OptArgInfo _ -> [| Just . Just |]
+      NoArgInfo _ _ -> [| id |]
+      ReqArgInfo _ _ _ -> [| Just |]
+      OptArgInfo _ _ _ -> [| Just . Just |]
 
 optToOption :: PolyOpt -> Q Exp
-optToOption opt =
+optToOption (PolyOpt opt) =
   [| Option $(lift $ chars opt) $(lift $ names opt) $f $(lift $ help opt) |]
   where
   name = mkName $ recName opt
   f = case argInfo opt of
-    NoArgInfo -> [| NoArg (\ o ->
+    NoArgInfo _ _ -> [| NoArg (\ o ->
       $(return $ RecUpdE (VarE 'o) [(name, ConE 'True)])) |]
-    ReqArgInfo g -> [| ReqArg (\ a o ->
+    ReqArgInfo g _ _ -> [| ReqArg (\ a o ->
       $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]
-    OptArgInfo g -> [| OptArg (\ a o ->
+    OptArgInfo g _ _ -> [| OptArg (\ a o ->
       $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]
