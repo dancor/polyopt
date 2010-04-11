@@ -1,9 +1,10 @@
-module OptDesc where
+{-# LANGUAGE TemplateHaskell #-}
+
+module Opt where
 
 import Data.PolyOpt
 
-optDesc :: [PolyOpt]
-optDesc = [
+$(polyOpt [
   noArg ["version"] "v"
     "Print version",
   reqArg ["color","colour"] "c"
@@ -11,4 +12,4 @@ optDesc = [
     "Foreground color",
   optArg ["show-decimal"] ""
     "N"
-    "Show full decimal precision, or to N digits"]
+    "Show full decimal precision, or to N digits"])

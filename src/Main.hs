@@ -1,14 +1,10 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 import Data.PolyOpt
-import OptDesc
-
-$(polyOpt optDesc)
+import qualified Opt
 
 main :: IO ()
 main = do
-  (opts, args) <- getOpts "lolconfig" "usage"
+  (opts, args) <- Opt.getOpts "lol.config" "usage"
   print args
-  print $ version opts
-  print $ color opts
-  print $ showDecimal opts
+  print $ Opt.version opts
+  print $ Opt.color opts
+  print $ Opt.showDecimal opts

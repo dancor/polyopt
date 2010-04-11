@@ -7,15 +7,16 @@ PolyOpt will allow a no-repetition specification of program options and then
 automatically make those options work simultaneously as command line options
 and as Data.ConfigFile options.
 
-Usage example (currently just have the TH Opts datatype constructor):
+Usage example:
 
-OptDesc.hs:
-  module OptDesc where
+Opt.hs:
+  {-# LANGUAGE TemplateHaskell #-}
+
+  module Opt where
 
   import Data.PolyOpt
 
-  optDesc :: [PolyOpt]
-  optDesc = [
+  $(polyOpt [
     noArg ["version"] "v"
       "Print version",
     reqArg ["color","colour"] "c"
@@ -23,23 +24,17 @@ OptDesc.hs:
       "Foreground color",
     optArg ["show-decimal"] ""
       "N"
-      "Show full decimal precision, or to N digits"]
+      "Show full decimal precision, or to N digits"])
 
 Main.hs:
-  {-# LANGUAGE TemplateHaskell #-}
-
-  import Data.PolyOpt
-  -- GHC TH seems to require optDesc in a separate module:
-  import OptDesc
-
-  $(polyOpt optDesc)
+  import qualified Opt
 
   main :: IO ()
   main = do
-    (opts, args) <- getOpts "usage"
-    print $ verbose opts
-    print $ color opts
-    print $ showDecimal opts
+    (opts, args) <- Opt.getOpts "lol.config" "usage"
+    print $ Opt.verbose opts
+    print $ Opt.color opts
+    print $ Opt.showDecimal opts
     print args
 
 This is what gets generated (but ConfigFile part not shown here yet..):
