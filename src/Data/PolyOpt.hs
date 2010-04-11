@@ -1,4 +1,3 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg,
@@ -24,26 +23,34 @@ Opt.hs:
     reqArg ["color","colour"] "c"
       "NAME"
       "Foreground color",
-    optArg ["show-decimal"] ""
-      "N"
+    optArgGen ["show-decimal"] ""
+      "N" [t|Int|] [|0|] [|maybe 8 read|]
       "Show full decimal precision, or to N digits"])
 
 Main.hs:
+  import System.Directory
+  import System.FilePath
   import qualified Opt
 
   main :: IO ()
   main = do
-    (opts, args) <- Opt.getOpts "lol.config" "usage"
+    homeDir <- getHomeDirectory
+    (opts, args) <- Opt.getOpts (homeDir </> ".lol" </> "config") "usage"
     print $ Opt.verbose opts
     print $ Opt.color opts
     print $ Opt.showDecimal opts
     print args
 
+~/.lol/config (could contain something like this, or not exist):
+  version = True
+  color = red
+  show-decimal = 4
+
 This is what gets generated (but ConfigFile part not shown here yet..):
   data Opts = Opts {
     version :: Bool,
     color :: Maybe String,
-    showDecimal :: Maybe (Maybe String)}
+    showDecimal :: Int}
 
   getOpts :: FilePath -> String -> IO (Opts, [String])
   getOpts configFile header = do
@@ -79,71 +86,57 @@ import Data.Char
 import Data.ConfigFile
 import Data.Either.Utils
 import Data.Typeable
-import Language.Haskell.Meta.Parse
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
-import System.Console.GetOpt
+import System.Console.GetOpt hiding (usageInfo)
 import System.Directory
 import System.Environment
+import qualified System.Console.GetOpt as GetOpt
 
--- we could also make a separate argType :: Q Exp instead of
--- inferring/annotating from argDef.
--- this would remove Lift a constraint (so e.g. functions could be result) and
--- kill tOf hack.. should consider.
-data ArgInfo a =
+data ArgInfo =
   NoArgInfo {
-    argDef :: a,
-    -- argGrab :: a,
+    argType :: Q Type,
+    argDef :: Q Exp,
+    -- :: a
     argGrab :: Q Exp} |
   ReqArgInfo {
     argGloss :: String,
-    argDef :: a,
-    -- argGrab :: String -> a,
+    argType :: Q Type,
+    argDef :: Q Exp,
+    -- :: String -> a
     argGrab :: Q Exp} |
   OptArgInfo {
     argGloss :: String,
-    argDef :: a,
-    -- argGrab :: Maybe String -> a,
+    argType :: Q Type,
+    argDef :: Q Exp,
+    -- :: Maybe String -> a
     argGrab :: Q Exp}
 
-data PolyOptA a = PolyOptA {
+data PolyOpt = PolyOpt {
   recName :: String,
   names :: [String],
   chars :: [Char],
-  argInfo :: ArgInfo a,
+  argInfo :: ArgInfo,
   help :: String}
 
-data PolyOpt = forall a. (Lift a, Typeable a) => PolyOpt (PolyOptA a)
+noArgGen :: [String] -> [Char] -> Q Type -> Q Exp -> Q Exp -> String -> PolyOpt
+noArgGen n c t d = PolyOpt (genRecName n) n c . NoArgInfo t d
 
-noArgGen :: (Lift a, Typeable a) =>
-  [String] -> [Char] -> a -> Q Exp -> String -> PolyOpt
-noArgGen n c d r = PolyOpt . PolyOptA (genRecName n) n c (NoArgInfo d r)
-
-reqArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
-  Q Exp -> String -> PolyOpt
-reqArgGen n c g d r = PolyOpt . PolyOptA (genRecName n) n c (ReqArgInfo g d r)
-
-optArgGen :: (Lift a, Typeable a) => [String] -> [Char] -> String -> a ->
-  Q Exp -> String -> PolyOpt
-optArgGen n c g d r = PolyOpt . PolyOptA (genRecName n) n c (OptArgInfo g d r)
+reqArgGen, optArgGen ::
+  [String] -> [Char] -> String -> Q Type -> Q Exp -> Q Exp -> String -> PolyOpt
+reqArgGen n c g t d = PolyOpt (genRecName n) n c . ReqArgInfo g t d
+optArgGen n c g t d = PolyOpt (genRecName n) n c . OptArgInfo g t d
 
 noArg :: [String] -> [Char] -> String -> PolyOpt
-noArg n c = noArgGen n c False [| True |]
+noArg n c = noArgGen n c [t| Bool |] [| False |] [| True |]
 
-reqArg :: [String] -> [Char] -> String -> String -> PolyOpt
-reqArg n c g = reqArgGen n c g (Nothing :: Maybe String) [| Just |]
-
-optArg :: [String] -> [Char] -> String -> String -> PolyOpt
-optArg n c g = optArgGen n c g (Nothing :: Maybe (Maybe String))
-  [| Just . Just |]
+reqArg, optArg :: [String] -> [Char] -> String -> String -> PolyOpt
+reqArg n c g = reqArgGen n c g [t| Maybe String |] [| Nothing |] [| Just |]
+optArg n c g =
+  optArgGen n c g [t| Maybe (Maybe String) |] [| Nothing |] [| Just . Just |]
 
 genRecName :: [String] -> String
 genRecName = dashToCamel . head
-
--- there might be a TH way to do this that doesn't need Typeable at all..
--- unsure
-tOf :: (Typeable a) => a -> Type
-tOf x = either error id . parseType $ showsTypeRep (typeOf x) ""
 
 dashToCamel :: String -> String
 dashToCamel [] = []
@@ -154,8 +147,8 @@ dashToCamel ['-'] = error "polyOpt: trailing dash in option name not allowed"
 dashToCamel (x:xs) = x : dashToCamel xs
 
 optBoxInfo :: PolyOpt -> Q (Name, Type)
-optBoxInfo (PolyOpt opt) = (,)
-  (mkName $ recName opt) <$> return (tOf . argDef $ argInfo opt)
+optBoxInfo opt = (,)
+  (mkName $ recName opt) <$> (argType $ argInfo opt)
 
 polyOpt :: [PolyOpt] -> Q [Dec]
 polyOpt opts = do
@@ -165,10 +158,15 @@ polyOpt opts = do
     -- is IsStrict better?  i have no idea, probably doesn't matter
     optRecords = map (\ (n, t) -> (n, NotStrict, t)) optInfos
     optNames = map fst optInfos
-  defRecs <- zip optNames <$>
-    mapM (\ (PolyOpt o) -> lift . argDef $ argInfo o) opts
+  defRecs <- zip optNames <$> mapM (argDef . argInfo) opts
   (DataD [] optsN [] [RecC optsN optRecords] [] :) <$> [d|
-    --getOpts :: FilePath -> String -> IO ($optsN, [String])
+    -- this would be compiled twice without a top-lev decl right?  too lame?
+    __optOptions = $(ListE <$> mapM optToOption opts)
+
+    usageInfo :: String -> String
+    usageInfo header = GetOpt.usageInfo header __optOptions
+
+    getOpts :: FilePath -> String -> IO ($(return $ ConT optsN), [String])
     getOpts configFile header = do
       config <- doesFileExist configFile >>= \ t -> if t
         then either (const emptyCP) id <$> readfile emptyCP configFile
@@ -176,13 +174,12 @@ polyOpt opts = do
       let
         configOptNames = either (const []) id $ options config defSection
         defOpts = $(return $ RecConE optsN defRecs)
-        optOptions = $(ListE <$> mapM optToOption opts)
         configOpts = foldl $(processConfigOpt 'config opts) defOpts
           configOptNames
       args <- getArgs
-      return $ case getOpt Permute optOptions args of
+      return $ case getOpt Permute __optOptions args of
         (o, n, []) -> (foldl (flip id) configOpts o, n)
-        (_, _, e) -> error $ concat e ++ usageInfo header optOptions |]
+        (_, _, e) -> error $ concat e ++ usageInfo header |]
 
 defSection :: String
 defSection = "DEFAULT"
@@ -194,7 +191,7 @@ processConfigOpt configN optDesc = [| \ opts optName ->
   where
   -- unrolling over names is lame?
   optMatch :: Name -> Name -> PolyOpt -> Q [Match]
-  optMatch optNameN optsN (PolyOpt polyOpt) =
+  optMatch optNameN optsN polyOpt =
     mapM (\ n -> (\ v -> Match (LitP $ StringL n)
     (NormalB $ RecUpdE (VarE optsN) [(mkName $ recName polyOpt, v)]) []) <$>
     [| $procFunc . forceEither $
@@ -203,22 +200,21 @@ processConfigOpt configN optDesc = [| \ opts optName ->
     names polyOpt
     where
     procFunc = case argInfo polyOpt of
-      NoArgInfo _ _ -> [| const $grab |]
-      ReqArgInfo _ _ _ -> grab
-      OptArgInfo _ _ _ -> [| $grab . Just |]
+      NoArgInfo _ _ _ -> [| const $grab |]
+      ReqArgInfo _ _ _ _ -> grab
+      OptArgInfo _ _ _ _-> [| $grab . Just |]
     grab = argGrab $ argInfo polyOpt
 
 optToOption :: PolyOpt -> Q Exp
-optToOption (PolyOpt opt) =
+optToOption opt =
   [| Option $(lift $ chars opt) $(lift $ names opt) $f $(lift $ help opt) |]
   where
   name = mkName $ recName opt
   f = case argInfo opt of
-    NoArgInfo _ _ -> [| NoArg (\ o ->
-      -- $(return $ RecUpdE (VarE 'o) [(name, ConE 'True)])) |]
+    NoArgInfo _ _ _ -> [| NoArg (\ o ->
       $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> grab)) |]
-    ReqArgInfo g _ _ -> [| ReqArg (\ a o ->
+    ReqArgInfo g _ _ _ -> [| ReqArg (\ a o ->
       $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| $grab a |])) g |]
-    OptArgInfo g _ _ -> [| OptArg (\ a o ->
+    OptArgInfo g _ _ _ -> [| OptArg (\ a o ->
       $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| $grab a |])) g |]
   grab = argGrab $ argInfo opt
