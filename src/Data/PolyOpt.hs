@@ -86,6 +86,10 @@ import System.Console.GetOpt
 import System.Directory
 import System.Environment
 
+-- we could also make a separate argType :: Q Exp instead of
+-- inferring/annotating from argDef.
+-- this would remove Lift a constraint (so e.g. functions could be result) and
+-- kill tOf hack.. should consider.
 data ArgInfo a =
   NoArgInfo {
     argDef :: a,
@@ -109,7 +113,7 @@ data PolyOptA a = PolyOptA {
   argInfo :: ArgInfo a,
   help :: String}
 
-data PolyOpt = forall a. PolyOpt (PolyOptA a)
+data PolyOpt = forall a. (Lift a, Typeable a) => PolyOpt (PolyOptA a)
 
 noArgGen :: (Lift a, Typeable a) =>
   [String] -> [Char] -> a -> Q Exp -> String -> PolyOpt
@@ -130,7 +134,8 @@ reqArg :: [String] -> [Char] -> String -> String -> PolyOpt
 reqArg n c g = reqArgGen n c g (Nothing :: Maybe String) [| Just |]
 
 optArg :: [String] -> [Char] -> String -> String -> PolyOpt
-optArg n c g = optArgGen n c g (Nothing :: Maybe (Maybe String)) [| Just |]
+optArg n c g = optArgGen n c g (Nothing :: Maybe (Maybe String))
+  [| Just . Just |]
 
 genRecName :: [String] -> String
 genRecName = dashToCamel . head
@@ -150,26 +155,18 @@ dashToCamel (x:xs) = x : dashToCamel xs
 
 optBoxInfo :: PolyOpt -> Q (Name, Type)
 optBoxInfo (PolyOpt opt) = (,)
-  (mkName $ recName opt) <$>
-  case argInfo opt of
-    NoArgInfo _ _ -> [t| Bool |]
-    ReqArgInfo _ _ _ -> [t| Maybe String |]
-    OptArgInfo _ _ _ -> [t| Maybe (Maybe String) |]
-
-defGen :: PolyOpt -> Exp
-defGen (PolyOpt opt) = ConE $ case argInfo opt of
-  NoArgInfo _ _ -> 'False
-  _ -> 'Nothing
+  (mkName $ recName opt) <$> return (tOf . argDef $ argInfo opt)
 
 polyOpt :: [PolyOpt] -> Q [Dec]
 polyOpt opts = do
   optInfos <- mapM optBoxInfo opts
   let
-    defRecs = zip optNames $ map defGen opts
     optsN = mkName "Opts"
     -- is IsStrict better?  i have no idea, probably doesn't matter
     optRecords = map (\ (n, t) -> (n, NotStrict, t)) optInfos
     optNames = map fst optInfos
+  defRecs <- zip optNames <$>
+    mapM (\ (PolyOpt o) -> lift . argDef $ argInfo o) opts
   (DataD [] optsN [] [RecC optsN optRecords] [] :) <$> [d|
     --getOpts :: FilePath -> String -> IO ($optsN, [String])
     getOpts configFile header = do
@@ -201,13 +198,15 @@ processConfigOpt configN optDesc = [| \ opts optName ->
     mapM (\ n -> (\ v -> Match (LitP $ StringL n)
     (NormalB $ RecUpdE (VarE optsN) [(mkName $ recName polyOpt, v)]) []) <$>
     [| $procFunc . forceEither $
-      get $(return $ VarE configN) defSection $(return $ VarE optNameN) |]) $
+      (get $(return $ VarE configN) defSection $(return $ VarE optNameN)
+      :: Either CPError String) |]) $
     names polyOpt
     where
     procFunc = case argInfo polyOpt of
-      NoArgInfo _ _ -> [| id |]
-      ReqArgInfo _ _ _ -> [| Just |]
-      OptArgInfo _ _ _ -> [| Just . Just |]
+      NoArgInfo _ _ -> [| const $grab |]
+      ReqArgInfo _ _ _ -> grab
+      OptArgInfo _ _ _ -> [| $grab . Just |]
+    grab = argGrab $ argInfo polyOpt
 
 optToOption :: PolyOpt -> Q Exp
 optToOption (PolyOpt opt) =
@@ -216,8 +215,10 @@ optToOption (PolyOpt opt) =
   name = mkName $ recName opt
   f = case argInfo opt of
     NoArgInfo _ _ -> [| NoArg (\ o ->
-      $(return $ RecUpdE (VarE 'o) [(name, ConE 'True)])) |]
+      -- $(return $ RecUpdE (VarE 'o) [(name, ConE 'True)])) |]
+      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> grab)) |]
     ReqArgInfo g _ _ -> [| ReqArg (\ a o ->
-      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]
+      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| $grab a |])) g |]
     OptArgInfo g _ _ -> [| OptArg (\ a o ->
-      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| Just a |])) g |]
+      $(RecUpdE (VarE 'o) . (:[]) . (,) name <$> [| $grab a |])) g |]
+  grab = argGrab $ argInfo opt
