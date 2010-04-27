@@ -166,7 +166,7 @@ polyOpt opts = do
     usageInfo :: String -> String
     usageInfo header = GetOpt.usageInfo header __optOptions
 
-    getOpts :: FilePath -> String -> IO ($(return $ ConT optsN), [String])
+    --getOpts :: FilePath -> String -> IO ($(return $ ConT optsN), [String])
     getOpts configFile header = do
       config <- doesFileExist configFile >>= \ t -> if t
         then either (const emptyCP) id <$> readfile emptyCP configFile
