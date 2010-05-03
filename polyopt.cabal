@@ -5,7 +5,8 @@ license-file:    LICENSE
 author:          dan corson <danl@alum.mit.edu>
 synopsis:        no-extra-typing command-line/config-file program options
 build-type:      Simple
-build-depends:   ConfigFile, MissingH, base, directory, mtl, template-haskell
+build-depends:   ConfigFile, MissingH, base > 4, directory, mtl,
+                 template-haskell
 
 exposed-modules: Data.PolyOpt
 hs-source-dirs:  src
