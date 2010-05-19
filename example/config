@@ -1,0 +1,4 @@
+# You can copy this file to ~/.lol/config for the example.
+version = True
+color = red
+show-decimal = 4

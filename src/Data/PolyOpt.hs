@@ -7,75 +7,6 @@ module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg,
 PolyOpt will allow a no-repetition specification of program options and then
 automatically make those options work simultaneously as command line options
 and as Data.ConfigFile options.
-
-Usage example:
-
-Opt.hs:
-  {-# LANGUAGE TemplateHaskell #-}
-
-  module Opt where
-
-  import Data.PolyOpt
-
-  $(polyOpt [
-    noArg ["version"] "v"
-      "Print version",
-    reqArg ["color","colour"] "c"
-      "NAME"
-      "Foreground color",
-    optArgGen ["show-decimal"] ""
-      "N" [t|Int|] [|0|] [|maybe 8 read|]
-      "Show full decimal precision, or to N digits"])
-
-Main.hs:
-  import System.Directory
-  import System.FilePath
-  import qualified Opt
-
-  main :: IO ()
-  main = do
-    homeDir <- getHomeDirectory
-    (opts, args) <- Opt.getOpts (homeDir </> ".lol" </> "config") "usage"
-    print $ Opt.verbose opts
-    print $ Opt.color opts
-    print $ Opt.showDecimal opts
-    print args
-
-~/.lol/config (could contain something like this, or not exist):
-  version = True
-  color = red
-  show-decimal = 4
-
-This is what gets generated (but ConfigFile part not shown here yet..):
-  data Opts = Opts {
-    version :: Bool,
-    color :: Maybe String,
-    showDecimal :: Int}
-
-  getOpts :: FilePath -> String -> IO (Opts, [String])
-  getOpts configFile header = do
-    let
-      defOpts :: Opts
-      defOpts = Opts {
-        version = False,
-        color = Nothing,
-        showDecimal = Nothing}
-      options :: [OptDescr (Opts -> Opts)]
-      options = [
-        Option "v" ["version"]
-          (NoArg (\ o -> o {version = True}))
-          "Print version",
-        Option "c" ["color", "colour"]
-          (ReqArg (\ a o -> o {color = Just a}) "NAME")
-          "Foreground color",
-        Option "" ["show-decimal"]
-          (OptArg (\ a o -> o {showDecimal = Just a}) "N")
-          "Show full decimal precision, or to N digits"]
-    configOpts <- todoShowHowConfigIsProcessed configFile defOpts
-    args <- getArgs
-    return $ case getOpt Permute options args of
-      (o, n, []) -> (foldl (flip id) configOpts o, n)
-      (_, _, e) -> error $ concat e ++ usageInfo header options
 -}
 
 import Control.Applicative
@@ -139,7 +70,7 @@ genRecName :: [String] -> String
 genRecName = dashToCamel . head
 
 dashToCamel :: String -> String
-dashToCamel [] = []
+dashToCamel "" = ""
 dashToCamel ('-':'-':_) =
   error "polyOpt: double dash in option name not allowed"
 dashToCamel ('-':x:xs) = toUpper x : dashToCamel xs
@@ -163,11 +94,16 @@ polyOpt opts = do
     -- this would be compiled twice without a top-lev decl right?  too lame?
     __optOptions = $(ListE <$> mapM optToOption opts)
 
-    usageInfo :: String -> String
-    usageInfo header = GetOpt.usageInfo header __optOptions
+    optInfo :: String
+    optInfo = tail $ GetOpt.usageInfo "" __optOptions
 
+    -- (usage) should be e.g.:
+    -- - (optInfo)
+    -- - ("header\n" ++ optInfo)
+    -- - ("header\n" ++ optInfo ++ "\nfooter")
+    --
     --getOpts :: FilePath -> String -> IO ($(return $ ConT optsN), [String])
-    getOpts configFile header = do
+    getOpts configFile usage = do
       config <- doesFileExist configFile >>= \ t -> if t
         then either (const emptyCP) id <$> readfile emptyCP configFile
         else return emptyCP
@@ -179,7 +115,7 @@ polyOpt opts = do
       args <- getArgs
       return $ case getOpt Permute __optOptions args of
         (o, n, []) -> (foldl (flip id) configOpts o, n)
-        (_, _, e) -> error $ concat e ++ usageInfo header |]
+        (_, _, e) -> error $ concat e ++ usage |]
 
 defSection :: String
 defSection = "DEFAULT"
