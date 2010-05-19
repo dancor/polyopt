@@ -9,11 +9,11 @@
   Just Nothing?
 - might add another class of type-inferred functions for case where defArg
   is Typeable.. reqArgInf or some such?
-    reqArgInf ["username"] "u" "USERNAME" [t|String|] [|""|] ==
-    reqArgGen ["username"] "u" "USERNAME" ""
+    reqArgGen ["username"] "u" "USERNAME" [t|String|] [|""|] ==
+    reqArgInf ["username"] "u" "USERNAME" ""
   and
-    optArgInf ["list-recent"] "l" "N" [t|Int|] [|0|] ==
-    optArgGen ["list-recent"] "l" "N" (0 :: Int)
+    optArgGen ["list-recent"] "l" "N" [t|Int|] [|0|] ==
+    optArgInf ["list-recent"] "l" "N" (0 :: Int)
   unsure.  i do think fully general *Gen case should exist for e.g.
   argDef being a non-TH-Lift-able type like a function type,
   so maybe *Inf is bloat..
