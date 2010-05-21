@@ -3,12 +3,6 @@
 module Data.PolyOpt (PolyOpt, polyOpt, noArg, reqArg, optArg,
   noArgGen, reqArgGen, optArgGen) where
 
-{-
-PolyOpt will allow a no-repetition specification of program options and then
-automatically make those options work simultaneously as command line options
-and as Data.ConfigFile options.
--}
-
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Error (runErrorT)
@@ -95,7 +89,7 @@ polyOpt opts = do
     __optOptions = $(ListE <$> mapM optToOption opts)
 
     optInfo :: String
-    optInfo = tail $ GetOpt.usageInfo "" __optOptions
+    optInfo = init . tail $ GetOpt.usageInfo "" __optOptions
 
     -- (usage) should be e.g.:
     -- - (optInfo)

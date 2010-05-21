@@ -1,3 +1,7 @@
+PolyOpt allows a no-repetition specification of program options and then
+automatically makes those options work simultaneously as command line options
+and as config file options.
+
 - todo: make more general
   - support non-DEFAULT config sections in some way?
     (right now don't even error if these exist, and they are ignored..)
